@@ -1,0 +1,31 @@
+services:
+  app:
+    build: ./app
+    restart: unless-stopped
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      SECURE_COOKIES: ${SECURE_COOKIES:-0}
+      DATA_DIR: /data
+      PORT: 3000
+    volumes:
+      - ./data:/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+
+volumes:
+  caddydata:
+  caddyconfig:

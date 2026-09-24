@@ -1,0 +1,9 @@
+{
+  "name": "detecta-rede",
+  "version": "1.0.0",
+  "description": "Detecta Rede — gestão da rede de franquias (sem dependências externas: Node 22 + SQLite embutido)",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": { "node": ">=22.13" },
+  "scripts": { "start": "node --no-warnings src/server.js" }
+}
