@@ -47,7 +47,7 @@ docker compose up -d --build --remove-orphans
 
 echo "==> 5/6 Backup diário do banco (03:00)"
 cat > /etc/cron.d/detecta-rede <<'EOF'
-0 3 * * * root cd /opt/detecta-rede && docker compose exec -T db pg_dump -U detecta detecta | gzip > backups/detecta-$(date +\%Y\%m\%d).sql.gz && find backups -name '*.sql.gz' -mtime +30 -delete
+0 3 * * * root cd /opt/detecta-rede && docker compose exec -T app node -e "require('node:sqlite');new (require('node:sqlite').DatabaseSync)('/data/detecta.sqlite').exec(\"VACUUM INTO '/data/backup.sqlite'\")" && gzip -c data/backup.sqlite > backups/detecta-$(date +\%Y\%m\%d).sqlite.gz && rm -f data/backup.sqlite && find backups -name '*.sqlite.gz' -mtime +30 -delete
 EOF
 chmod 644 /etc/cron.d/detecta-rede
 

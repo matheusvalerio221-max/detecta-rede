@@ -2,7 +2,7 @@
 # Atualiza o Detecta Rede para a última versão do repositório
 set -euo pipefail
 cd /opt/detecta-rede
-docker compose exec -T db pg_dump -U detecta detecta | gzip > backups/pre-update-$(date +%Y%m%d%H%M).sql.gz || true
+cp data/detecta.sqlite backups/pre-update-$(date +%Y%m%d%H%M).sqlite 2>/dev/null || true
 git pull -q
 docker compose up -d --build --remove-orphans
 echo "Atualizado."

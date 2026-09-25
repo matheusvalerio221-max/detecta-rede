@@ -9,7 +9,7 @@ Sistema de gestão da rede de franquias Detecta (inspirado no modelo SULTS).
 ## Instalação (VPS Rocky Linux 9 / Ubuntu)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SEU_USUARIO/detecta-rede/main/install.sh | bash -s -- https://github.com/SEU_USUARIO/detecta-rede.git rede.detecta.com.br
+curl -fsSL https://raw.githubusercontent.com/matheusvalerio221-max/detecta-rede/main/install.sh | bash -s -- https://github.com/matheusvalerio221-max/detecta-rede.git rede.detecta.com.br
 ```
 
 O domínio é opcional; sem ele o sistema responde pelo IP em HTTP.
@@ -22,4 +22,4 @@ bash /opt/detecta-rede/update.sh
 
 ## Stack
 
-Node 22 + Express · PostgreSQL 16 · Caddy (HTTPS automático) · Docker Compose · backup diário em `/opt/detecta-rede/backups`.
+Node 22 (sem dependências externas) · SQLite embutido · Caddy (HTTPS automático) · Docker Compose · dados em `/opt/detecta-rede/data`, backup diário em `/opt/detecta-rede/backups`.
