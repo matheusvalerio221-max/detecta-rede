@@ -85,5 +85,7 @@ const server = http.createServer(async (req, res) => {
 migrate();
 seedIfEmpty();
 startMailer();
+server.requestTimeout = 0; // uploads grandes (vídeos) podem levar mais de 5 min
+server.headersTimeout = 65000;
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Detecta Rede no ar na porta ${PORT}`));

@@ -89,6 +89,8 @@ export function migrate() {
   const cols = all("pragma table_info(users)").map(c => c.name);
   if (!cols.includes("approval")) db.exec("alter table users add column approval TEXT NOT NULL DEFAULT 'aprovado'"); // aprovado | pendente | recusado
   if (!cols.includes("requested_by")) db.exec("alter table users add column requested_by INTEGER");
+  const cu = all("pragma table_info(courses)").map(c => c.name);
+  if (!cu.includes("unit_ids")) db.exec("alter table courses add column unit_ids TEXT NOT NULL DEFAULT '[]'");
   const ccols = all("pragma table_info(ticket_categories)").map(c => c.name);
   if (!ccols.includes("sla_unit_hours")) db.exec("alter table ticket_categories add column sla_unit_hours INTEGER NOT NULL DEFAULT 24"); // prazo do franqueado responder
   if (!ccols.includes("active")) db.exec("alter table ticket_categories add column active INTEGER NOT NULL DEFAULT 1");

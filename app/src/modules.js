@@ -11,7 +11,7 @@ const E = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 
 const net = (ctx) => isNetwork(ctx.user);
 const onlyHQ = (ctx, msg = "Apenas a franqueadora pode fazer isso.") => { if (!net(ctx)) throw new HttpError(403, msg); };
-const J = (s, d = []) => { try { return JSON.parse(s ?? "") ?? d; } catch { return d; } };
+const J = (s, d = []) => { if (Array.isArray(s) || (s && typeof s === "object")) return s; try { return JSON.parse(s ?? "") ?? d; } catch { return d; } };
 const int = (v, d = 0) => Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d;
 const num = (v, d = 0) => Number.isFinite(parseFloat(v)) ? parseFloat(v) : d;
 
@@ -42,7 +42,7 @@ route("POST", "/files", (ctx) => {
   fs.copyFileSync(ctx.rawFile.path, path.join(UPLOAD_DIR, stored));
   const r = run("insert into files(kind,ref_id,user_id,filename,mime,size,stored) values(?,?,?,?,?,?,?)", kind, ref, ctx.user.id, filename, mime, ctx.rawFile.size, stored);
   return get("select id,kind,ref_id,filename,mime,size,created_at from files where id=?", r.lastInsertRowid);
-}, { raw: true, stream: true, max: 320e6 });
+}, { raw: true, stream: true, max: 2.2e9 });
 route("GET", "/files/:id", (ctx) => {
   const f = get("select * from files where id=?", ctx.params.id); if (!f) throw new HttpError(404, "Arquivo não encontrado.");
   fileAccess(ctx, f);
@@ -196,7 +196,8 @@ route("GET", "/checklists/summary", (ctx) => { // evolução por unidade
    UNIVERSIDADE
    ===================================================================== */
 const LESSON_KINDS = ["video", "text", "pdf", "link"];
-const audienceOk = (c, u) => c.audience === "all" || (c.audience === "franqueado" && u.role_key === "franqueado") || (c.audience === "tecnico" && u.role_key === "tecnico") || (c.audience === "unidade" && u.unit_id) || (c.audience === "franqueadora" && !u.unit_id);
+const audienceOk = (c, u) => c.audience === "all" || (c.audience === "franqueado" && u.role_key === "franqueado") || (c.audience === "tecnico" && u.role_key === "tecnico") || (c.audience === "unidade" && u.unit_id) || (c.audience === "franqueadora" && !u.unit_id)
+  || (c.audience === "units" && !!u.unit_id && J(c.unit_ids).map(Number).includes(Number(u.unit_id)));
 const embedUrl = (url = "") => { // YouTube / Vimeo → iframe src; outros: null
   const yt = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{6,})/); if (yt) return `https://www.youtube-nocookie.com/embed/${yt[1]}`;
   const vm = url.match(/vimeo\.com\/(?:video\/)?(\d+)/); if (vm) return `https://player.vimeo.com/video/${vm[1]}`;
@@ -205,6 +206,7 @@ const embedUrl = (url = "") => { // YouTube / Vimeo → iframe src; outros: null
 function courseFull(ctx, id, forEdit = false) {
   const c = get("select c.*, u.name created_by_name from courses c left join users u on u.id=c.created_by where c.id=?", id); if (!c) throw new HttpError(404, "Curso não encontrado.");
   if (!forEdit && !net(ctx) && (!c.active || !audienceOk(c, ctx.user))) throw new HttpError(403, "Curso não disponível para o seu perfil.");
+  c.unit_ids = J(c.unit_ids);
   c.lessons = all(`select l.*, f.filename file_name, f.mime file_mime from lessons l left join files f on f.id=l.file_id where l.course_id=? ${forEdit ? "" : "and l.active=1"} order by l.ord, l.id`, id)
     .map(l => ({ ...l, embed: l.kind === "video" ? embedUrl(l.content || "") : null }));
   const done = new Set(all("select lesson_id from lesson_progress where user_id=?", ctx.user.id).map(x => x.lesson_id));
@@ -221,7 +223,7 @@ route("GET", "/courses", (ctx) => {
     (select count(*) from lesson_progress p join lessons l on l.id=p.lesson_id where l.course_id=c.id and l.active=1 and p.user_id=?) done,
     (select max(passed) from course_results r where r.course_id=c.id and r.user_id=?) passed
     from courses c ${ctx.query.all && net(ctx) ? "" : "where c.active=1"} order by c.mandatory desc, c.category, c.title`, u.id, u.id);
-  return list.filter(c => (ctx.query.all && net(ctx)) || audienceOk(c, u)).map(c => ({ ...c, pct: c.lessons ? Math.round(c.done / c.lessons * 100) : 0, completed: c.lessons > 0 && c.done === c.lessons && (c.questions === 0 || !!c.passed) }));
+  return list.filter(c => (ctx.query.all && net(ctx)) || audienceOk(c, u)).map(c => ({ ...c, unit_ids: J(c.unit_ids), pct: c.lessons ? Math.round(c.done / c.lessons * 100) : 0, completed: c.lessons > 0 && c.done === c.lessons && (c.questions === 0 || !!c.passed) }));
 });
 route("GET", "/courses/report", (ctx) => { // franqueadora: situação por usuário
   need(ctx, "university", 2); onlyHQ(ctx);
@@ -269,10 +271,12 @@ function saveQuestions(courseId, questions) {
   });
   run(`update quiz_questions set active=0 where course_id=? ${keep.length ? `and id not in (${keep.map(() => "?").join(",")})` : ""}`, courseId, ...keep);
 }
-const courseBody = (b) => { if (!b.title?.trim()) bad("Informe o título do curso."); return [b.title.trim(), b.description || null, (b.category || "").trim() || "Geral", ["all", "franqueado", "tecnico", "unidade", "franqueadora"].includes(b.audience) ? b.audience : "all", b.mandatory ? 1 : 0, Math.max(0, Math.min(100, int(b.pass_score, 70)))]; };
+const courseBody = (b) => { if (!b.title?.trim()) bad("Informe o título do curso."); const aud = ["all", "franqueado", "tecnico", "unidade", "franqueadora", "units"].includes(b.audience) ? b.audience : "all";
+  const ids = aud === "units" ? [...new Set((b.unit_ids || []).map(Number).filter(Boolean))] : []; if (aud === "units" && !ids.length) bad("Selecione ao menos uma unidade.");
+  return [b.title.trim(), b.description || null, (b.category || "").trim() || "Geral", aud, b.mandatory ? 1 : 0, Math.max(0, Math.min(100, int(b.pass_score, 70))), JSON.stringify(ids)]; };
 route("POST", "/courses", (ctx) => {
   need(ctx, "university", 1); onlyHQ(ctx, "Apenas a franqueadora cria cursos."); const b = ctx.body; const v = courseBody(b);
-  const r = run("insert into courses(title,description,category,audience,mandatory,pass_score,created_by) values(?,?,?,?,?,?,?)", ...v, ctx.user.id);
+  const r = run("insert into courses(title,description,category,audience,mandatory,pass_score,unit_ids,created_by) values(?,?,?,?,?,?,?,?)", ...v, ctx.user.id);
   saveLessons(r.lastInsertRowid, b.lessons); saveQuestions(r.lastInsertRowid, b.questions);
   log(ctx.user.id, null, "universidade", `Curso criado: ${v[0]}`);
   if (b.notify !== false) { const c = get("select * from courses where id=?", r.lastInsertRowid); const to = recipients.byRole(x => audienceOk(c, x));
@@ -281,7 +285,7 @@ route("POST", "/courses", (ctx) => {
 });
 route("PUT", "/courses/:id", (ctx) => {
   need(ctx, "university", 2); onlyHQ(ctx); const b = ctx.body; const c = get("select * from courses where id=?", ctx.params.id); if (!c) throw new HttpError(404, "Curso não encontrado."); const v = courseBody(b);
-  run("update courses set title=?,description=?,category=?,audience=?,mandatory=?,pass_score=?,active=? where id=?", ...v, b.active === false ? 0 : 1, c.id);
+  run("update courses set title=?,description=?,category=?,audience=?,mandatory=?,pass_score=?,unit_ids=?,active=? where id=?", ...v, b.active === false ? 0 : 1, c.id);
   if (Array.isArray(b.lessons)) saveLessons(c.id, b.lessons); if (Array.isArray(b.questions)) saveQuestions(c.id, b.questions);
   return courseFull(ctx, c.id, true);
 });

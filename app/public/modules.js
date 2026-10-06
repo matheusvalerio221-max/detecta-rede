@@ -1,12 +1,16 @@
 /* Detecta Rede — fase 2: Checklist e Universidade (carrega após app.js) */
 
 /* ---------- utilitários ---------- */
-async function uploadFile(file, kind, ref, max = 10 * 1024 * 1024) {
-  if (file.size > max) { toast(`${file.name}: maior que ${Math.round(max / 1048576)} MB`); return null; }
+function uploadFile(file, kind, ref, max = 10 * 1024 * 1024, onProgress) {
+  if (file.size > max) { toast(`${file.name}: maior que ${max >= 1073741824 ? (max / 1073741824).toFixed(0) + " GB" : Math.round(max / 1048576) + " MB"}`); return Promise.resolve(null); }
   const q = `?kind=${kind}${ref ? `&ref=${ref}` : ""}&filename=${encodeURIComponent(file.name)}`;
-  const r = await fetch(`/api/files${q}`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
-  const j = await r.json().catch(() => ({})); if (!r.ok) { toast(`${file.name}: ${j.error || "falha no envio"}`); return null; }
-  return j;
+  return new Promise(resolve => {
+    const x = new XMLHttpRequest(); x.open("POST", `/api/files${q}`); x.withCredentials = true; x.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    x.upload.onprogress = e => { if (onProgress && e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100), e.loaded, e.total); };
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch {} if (x.status >= 200 && x.status < 300) resolve(j); else { toast(`${file.name}: ${j.error || "falha no envio"}`); resolve(null); } };
+    x.onerror = () => { toast(`${file.name}: falha de rede no envio`); resolve(null); };
+    x.send(file);
+  });
 }
 const fileLink = f => f.mime.startsWith("image/")
   ? `<a href="/api/files/${f.id}" target="_blank" title="${esc(f.filename)}"><img src="/api/files/${f.id}" alt="" style="height:64px;max-width:110px;object-fit:cover;border-radius:8px;border:1px solid var(--line)"></a>`
@@ -108,7 +112,8 @@ async function runModal(id) {
 /* =====================================================================
    UNIVERSIDADE
    ===================================================================== */
-const AUD = { all: "Toda a rede", franqueado: "Franqueados", tecnico: "Técnicos", unidade: "Unidades (franqueado + técnico)", franqueadora: "Equipe da franqueadora" };
+const AUD = { all: "Toda a rede", units: "Unidades selecionadas", franqueado: "Todos os franqueados", tecnico: "Todos os técnicos", unidade: "Todas as unidades (franqueado + técnico)", franqueadora: "Equipe da franqueadora" };
+const MAX_VIDEO = 2 * 1024 * 1024 * 1024; // 2 GB
 const LK = { video: "🎬 Vídeo", text: "📝 Texto", pdf: "📄 Arquivo", link: "🔗 Link" };
 views.uni = async () => {
   const sub = state.uniTab || "courses";
@@ -120,7 +125,7 @@ views.uni = async () => {
     `<div class="tabs">${tabs.map(([k, n]) => `<button class="tab ${k === sub ? "on" : ""}" data-tab="${k}">${n}</button>`).join("")}</div><div id="uniBody"></div>`;
   $("#view").querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { state.uniTab = b.dataset.tab; loadView(); });
   const body = $("#uniBody");
-  const card = c => `<div class="course ${c.completed ? "done" : ""}" data-course="${c.id}"><div class="row" style="justify-content:space-between;align-items:flex-start"><b>${esc(c.title)}</b>${c.mandatory ? '<span class="pill brand">obrigatório</span>' : ""}</div>
+  const card = c => `<div class="course ${c.completed ? "done" : ""}" data-course="${c.id}"><div class="row" style="justify-content:space-between;align-items:flex-start"><b>${esc(c.title)}</b><span>${c.mandatory ? '<span class="pill brand">obrigatório</span> ' : ""}${isNet() && c.audience === "units" ? `<span class="pill n" title="Unidades selecionadas">${(c.unit_ids || []).length} unid.</span>` : ""}</span></div>
     <p class="small muted" style="margin:4px 0 8px">${esc(c.description || "")}</p>
     <div class="row small" style="gap:10px"><span>${c.lessons} aula${c.lessons === 1 ? "" : "s"}</span>${c.questions ? `<span>prova${c.passed ? " ✓" : ""}</span>` : ""}${!c.active ? '<span class="pill n">inativo</span>' : ""}<span style="margin-left:auto">${c.completed ? '<span class="pill ok">concluído</span>' : `${c.pct}%`}</span></div>
     <div class="bar" style="margin-top:6px"><i class="${c.completed ? "ok" : ""}" style="width:${c.pct}%"></i></div></div>`;
@@ -181,7 +186,7 @@ function quizModal(c, after) {
 
 /* --- editor de curso (franqueadora) --- */
 async function courseEditor(id, folders = []) {
-  const c = id ? await api(`/courses/${id}?edit=1`) : { title: "", category: "", audience: "all", mandatory: 0, pass_score: 70, active: 1, lessons: [], questions: [] };
+  const [c, units] = await Promise.all([id ? api(`/courses/${id}?edit=1`) : Promise.resolve({ title: "", category: "", audience: "all", mandatory: 0, pass_score: 70, active: 1, lessons: [], questions: [], unit_ids: [] }), api("/units")]);
   const lessons = c.lessons.filter(l => l.active !== 0).map(l => ({ ...l })); const questions = c.questions.map(q => ({ ...q }));
   const lrow = (l, i) => `<tr data-i="${i}"><td><input class="in" name="title" value="${esc(l.title || "")}" placeholder="Título da aula" style="min-width:180px" required></td>
     <td><select class="in" name="kind">${Object.entries(LK).map(([k, n]) => `<option value="${k}" ${l.kind === k ? "selected" : ""}>${n}</option>`).join("")}</select></td>
@@ -199,25 +204,31 @@ async function courseEditor(id, folders = []) {
     <div><label class="f">Pasta</label><input class="in" name="category" list="folders" value="${esc(c.category || "")}" placeholder="Ex.: Treinamento Operacional, Comercial" required><datalist id="folders">${folders.map(f => `<option value="${esc(f)}">`).join("")}</datalist></div></div>
     <div><label class="f">Descrição</label><textarea class="in" name="description" rows="2">${esc(c.description || "")}</textarea></div>
     <div class="grid g2"><div><label class="f">Público</label><select class="in" name="audience">${Object.entries(AUD).map(([k, n]) => `<option value="${k}" ${c.audience === k ? "selected" : ""}>${n}</option>`).join("")}</select></div><div><label class="f">Nota mínima na prova (%)</label><input class="in num" name="pass_score" type="number" min="0" max="100" value="${c.pass_score}"></div></div>
+    <div id="unitPick" style="${c.audience === "units" ? "" : "display:none"}"><label class="f">Unidades que recebem este curso</label><div class="row" style="gap:6px 14px">${units.filter(u => !u.is_hq).map(u => `<label class="small" style="white-space:nowrap"><input type="checkbox" name="unit_ids" value="${u.id}" ${(c.unit_ids || []).includes(u.id) ? "checked" : ""}> ${esc(u.name)}</label>`).join("")}</div></div>
     <div class="row"><label class="small"><input type="checkbox" name="mandatory" ${c.mandatory ? "checked" : ""}> Curso obrigatório</label>${id ? `<label class="small"><input type="checkbox" name="active" ${c.active ? "checked" : ""}> Curso ativo (visível)</label>` : ""}</div>
-    <h3 style="margin-top:6px">Aulas</h3><div class="tw"><table id="lessons"><tr><th>Título</th><th>Tipo</th><th>Conteúdo</th><th>Duração</th><th></th></tr>${lessons.map(lrow).join("")}</table></div><div><button type="button" class="btn s" id="addLesson">+ Adicionar aula</button> <span class="small muted">Vídeo: cole o link do YouTube (recomendado: vídeo “não listado”) ou envie o MP4 (até 300 MB).</span></div>
+    <h3 style="margin-top:6px">Aulas</h3><div class="tw"><table id="lessons"><tr><th>Título</th><th>Tipo</th><th>Conteúdo</th><th>Duração</th><th></th></tr>${lessons.map(lrow).join("")}</table></div><div><button type="button" class="btn s" id="addLesson">+ Adicionar aula</button> <span class="small muted">Vídeo: cole o link do YouTube/Vimeo ou envie o arquivo MP4 (até 2 GB; aguarde a barra chegar a 100% antes de salvar).</span></div>
     <h3 style="margin-top:6px">Prova (opcional)</h3><div id="questions" class="fg">${questions.map(qrow).join("")}</div><div><button type="button" class="btn s" id="addQ">+ Adicionar questão</button></div></div>`,
     async (o, f) => {
       const ls = [...f.querySelectorAll("#lessons tr[data-i]")].map(tr => { const g = n => tr.querySelector(`[name=${n}]`); return { id: lessons[+tr.dataset.i]?.id, title: g("title").value, kind: g("kind").value, content: g("content")?.value || "", file_id: g("file_id")?.value || null, duration_min: g("duration_min").value || null }; });
       const qs = [...f.querySelectorAll("#questions [data-q]")].map(d => ({ id: questions[+d.dataset.q]?.id, text: d.querySelector("[name=qtext]").value, options: [0, 1, 2, 3].map(j => d.querySelector(`[name=qo${j}]`).value).filter(Boolean), correct: +(d.querySelector("input[type=radio]:checked")?.value ?? 0) }));
       if (ls.some(l => l.kind === "video" && !l.content && !l.file_id)) throw (toast("Aula de vídeo sem link nem arquivo."), new Error("x"));
       if (ls.some(l => l.kind === "pdf" && !l.file_id)) throw (toast("Aula de arquivo sem arquivo enviado."), new Error("x"));
-      await api(id ? `/courses/${id}` : "/courses", { method: id ? "PUT" : "POST", body: { title: o.ctitle, category: o.category, description: o.description, audience: o.audience, pass_score: +o.pass_score, mandatory: !!o.mandatory, active: id ? !!o.active : true, lessons: ls, questions: qs } });
+      const unit_ids = [...f.querySelectorAll("[name=unit_ids]:checked")].map(i => +i.value);
+      await api(id ? `/courses/${id}` : "/courses", { method: id ? "PUT" : "POST", body: { title: o.ctitle, category: o.category, description: o.description, audience: o.audience, unit_ids, pass_score: +o.pass_score, mandatory: !!o.mandatory, active: id ? !!o.active : true, lessons: ls, questions: qs } });
       toast(id ? "Curso atualizado" : "Curso criado"); state.uniTab = "manage"; loadView();
     });
   bg.querySelector(".modal").style.maxWidth = "960px";
+  bg.querySelector("[name=audience]").onchange = e => { bg.querySelector("#unitPick").style.display = e.target.value === "units" ? "" : "none"; };
   const tbl = bg.querySelector("#lessons"), qdiv = bg.querySelector("#questions");
   bg.querySelector("#addLesson").onclick = () => { lessons.push({ title: "", kind: "video" }); tbl.insertAdjacentHTML("beforeend", lrow(lessons[lessons.length - 1], lessons.length - 1)); };
   bg.querySelector("#addQ").onclick = () => { questions.push({ text: "", options: [], correct: 0 }); qdiv.insertAdjacentHTML("beforeend", qrow(questions[questions.length - 1], questions.length - 1)); };
   tbl.addEventListener("change", async e => {
     const tr = e.target.closest("tr[data-i]"); if (!tr) return;
     if (e.target.name === "kind") { const l = lessons[+tr.dataset.i] || {}; l.kind = e.target.value; tr.querySelector(".lcontent").innerHTML = lcontent({ ...l, content: "", file_id: null }); }
-    if (e.target.matches("[data-file]")) { const file = e.target.files[0]; if (!file) return; const nm = tr.querySelector("[data-fname]"); nm.textContent = `enviando ${file.name}…`; const up = await uploadFile(file, "lesson", null, 320 * 1024 * 1024); if (up) { tr.querySelector("[name=file_id]").value = up.id; nm.textContent = `arquivo: ${up.filename} (${Math.round(up.size / 1048576)} MB)`; } else nm.textContent = "falha no envio"; }
+    if (e.target.matches("[data-file]")) { const file = e.target.files[0]; if (!file) return; const nm = tr.querySelector("[data-fname]"); const saveBtn = bg.querySelector(".acts .btn.p"); saveBtn.disabled = true;
+      nm.innerHTML = `<span class="up"><span class="bar" style="width:140px;display:inline-block;vertical-align:middle"><i style="width:0%"></i></span> <b>0%</b> ${esc(file.name)} (${(file.size / 1048576).toFixed(0)} MB)</span>`;
+      const up = await uploadFile(file, "lesson", null, MAX_VIDEO, (p) => { const i = nm.querySelector("i"), b = nm.querySelector("b"); if (i) i.style.width = p + "%"; if (b) b.textContent = p + "%"; });
+      saveBtn.disabled = false; if (up) { tr.querySelector("[name=file_id]").value = up.id; nm.textContent = `arquivo: ${up.filename} (${(up.size / 1048576).toFixed(0)} MB)`; } else nm.textContent = "falha no envio"; }
   });
   tbl.addEventListener("click", e => { const tr = e.target.closest("tr[data-i]"); if (!tr) return; if (e.target.closest("[data-del]")) tr.remove(); else if (e.target.closest("[data-up]") && tr.previousElementSibling?.dataset.i) tr.parentNode.insertBefore(tr, tr.previousElementSibling); else if (e.target.closest("[data-dn]") && tr.nextElementSibling) tr.parentNode.insertBefore(tr.nextElementSibling, tr); });
   qdiv.addEventListener("click", e => { if (e.target.closest("[data-qdel]")) e.target.closest("[data-q]").remove(); });
