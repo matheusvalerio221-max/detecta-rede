@@ -14,11 +14,11 @@ export const ROLES = {
 };
 // [ver, inserir, editar, excluir]
 export const DEFAULT_PERMS = {
-  admin:      { units:[1,1,1,1], users:[1,1,1,1], tickets:[1,1,1,1], comms:[1,1,1,1], tasks:[1,1,1,1], security:[1,1,1,1] },
-  gestor:     { units:[1,1,1,0], users:[1,1,1,0], tickets:[1,1,1,0], comms:[1,1,1,0], tasks:[1,1,1,0], security:[1,0,0,0] },
-  consultor:  { units:[1,0,0,0], users:[1,0,0,0], tickets:[1,1,1,0], comms:[1,0,0,0], tasks:[1,1,1,0], security:[0,0,0,0] },
-  franqueado: { units:[1,0,0,0], users:[1,0,0,0], tickets:[1,1,1,0], comms:[1,0,0,0], tasks:[1,1,1,0], security:[0,0,0,0] },
-  tecnico:    { units:[0,0,0,0], users:[0,0,0,0], tickets:[1,1,0,0], comms:[1,0,0,0], tasks:[1,0,1,0], security:[0,0,0,0] },
+  admin:      { units:[1,1,1,1], users:[1,1,1,1], tickets:[1,1,1,1], comms:[1,1,1,1], tasks:[1,1,1,1], security:[1,1,1,1], checklist:[1,1,1,1], university:[1,1,1,1] },
+  gestor:     { units:[1,1,1,0], users:[1,1,1,0], tickets:[1,1,1,0], comms:[1,1,1,0], tasks:[1,1,1,0], security:[1,0,0,0], checklist:[1,1,1,0], university:[1,1,1,0] },
+  consultor:  { units:[1,0,0,0], users:[1,0,0,0], tickets:[1,1,1,0], comms:[1,0,0,0], tasks:[1,1,1,0], security:[0,0,0,0], checklist:[1,1,1,0], university:[1,0,0,0] },
+  franqueado: { units:[1,0,0,0], users:[1,1,0,0], tickets:[1,1,1,0], comms:[1,0,0,0], tasks:[1,1,1,0], security:[0,0,0,0], checklist:[1,1,0,0], university:[1,0,0,0] },
+  tecnico:    { units:[0,0,0,0], users:[0,0,0,0], tickets:[1,1,0,0], comms:[1,0,0,0], tasks:[1,0,1,0], security:[0,0,0,0], checklist:[1,0,0,0], university:[1,0,0,0] },
 };
 
 /* senhas: scrypt */

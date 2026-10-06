@@ -14,8 +14,8 @@ export function seedIfEmpty() {
 
   const admin = run("insert into users(name,email,password_hash,role_key) values(?,?,?,'admin')", "Administrador", adminEmail, hashPassword(adminPass)).lastInsertRowid;
 
-  for (const [name, dept, sla] of [["Suporte técnico", "Suporte técnico", 4], ["Sistemas (SmartCip)", "TI", 2], ["Marketing", "Marketing", 8], ["Jurídico / Contratos", "Jurídico", 24], ["Compras e fornecedores", "Compras", 8], ["Financeiro", "Financeiro", 8]])
-    run("insert into ticket_categories(name,department,sla_hours) values(?,?,?)", name, dept, sla);
+  for (const [name, dept, sla] of [["Suporte técnico", "Suporte técnico", 4], ["Sistemas (SmartCip)", "TI", 2], ["Marketing", "Marketing", 8], ["Jurídico / Contratos", "Jurídico", 24], ["Compras e fornecedores", "Compras", 8], ["Financeiro", "Financeiro", 8], ["Orçamentos", "Comercial", 8]])
+    run("insert into ticket_categories(name,department,sla_hours,sla_unit_hours) values(?,?,?,24)", name, dept, sla);
 
   run("insert into communications(title,body,author_id,audience) values(?,?,?,'all')", "Bem-vindos ao Detecta Rede",
     "Este é o novo sistema de gestão da rede Detecta. Aqui você abre chamados para a franqueadora, recebe comunicados oficiais, acompanha tarefas e planos de ação. Confirme a leitura deste comunicado para registrar sua ciência.", admin);

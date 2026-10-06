@@ -36,18 +36,20 @@ JWT_SECRET=$(rnd 48)
 ADMIN_EMAIL=admin@detecta.com.br
 ADMIN_PASSWORD=$ADMIN_PASSWORD
 SITE_ADDRESS=${DOMAIN:-:80}
+SITE_URL=${DOMAIN:+https://$DOMAIN}
 SECURE_COOKIES=$([ -n "$DOMAIN" ] && echo 1 || echo 0)
 EOF
   chmod 600 .env
 fi
 [ -n "$DOMAIN" ] && sed -i "s|^SITE_ADDRESS=.*|SITE_ADDRESS=$DOMAIN|; s|^SECURE_COOKIES=.*|SECURE_COOKIES=1|" .env
+[ -n "$DOMAIN" ] && { grep -q '^SITE_URL=' .env && sed -i "s|^SITE_URL=.*|SITE_URL=https://$DOMAIN|" .env || echo "SITE_URL=https://$DOMAIN" >> .env; }
 
 echo "==> 4/6 Build e subida dos containers (pode levar alguns minutos)"
 docker compose up -d --build --remove-orphans
 
 echo "==> 5/6 Backup diário do banco (03:00)"
 cat > /etc/cron.d/detecta-rede <<'EOF'
-0 3 * * * root cd /opt/detecta-rede && docker compose exec -T app node -e "require('node:sqlite');new (require('node:sqlite').DatabaseSync)('/data/detecta.sqlite').exec(\"VACUUM INTO '/data/backup.sqlite'\")" && gzip -c data/backup.sqlite > backups/detecta-$(date +\%Y\%m\%d).sqlite.gz && rm -f data/backup.sqlite && find backups -name '*.sqlite.gz' -mtime +30 -delete
+0 3 * * * root cd /opt/detecta-rede && docker compose exec -T app node -e "require('node:sqlite');new (require('node:sqlite').DatabaseSync)('/data/detecta.sqlite').exec(\"VACUUM INTO '/data/backup.sqlite'\")" && gzip -c data/backup.sqlite > backups/detecta-$(date +\%Y\%m\%d).sqlite.gz && rm -f data/backup.sqlite && tar czf backups/uploads-$(date +\%Y\%m\%d).tgz -C data uploads 2>/dev/null; find backups \( -name '*.sqlite.gz' -o -name 'uploads-*.tgz' \) -mtime +30 -delete
 EOF
 chmod 644 /etc/cron.d/detecta-rede
 
