@@ -43,7 +43,7 @@ function render() {
   const root = $("#root");
   if (!state.me) { root.innerHTML = loginView(); bindLogin(); return; }
   root.innerHTML = `<div class="app">
-    <aside class="sb" id="sb"><div class="logo"><div class="mark">D</div><div><b>Detecta Rede</b><small>Gestão da rede de franquias</small></div></div>
+    <aside class="sb" id="sb"><div class="logo"><div class="mark">D</div><div><b>Detecta Rede</b><small>Gestão da rede de franquias</small></div></div><div class="brand"><img src="/logo-detecta.png" alt="Detecta — Manejo e Controle Integrado de Pragas Urbanas"></div>
       ${NAV.map(g => { const items = g.items.filter(([k, , , mod]) => mod === "dash" || can(mod)); return items.length ? `<div class="grp"><span>${g.g}</span>${items.map(([k, n, ic]) => `<button class="nav ${k === state.view ? "on" : ""}" data-k="${k}">${ic}<span>${k === "units" && !isNet() ? "Minha unidade" : n}</span>${state.counts?.[k] ? `<span class="cnt">${state.counts[k]}</span>` : ""}</button>`).join("")}</div>` : ""; }).join("")}
       <div class="grp" style="margin-top:auto"><button class="nav" id="logout">⎋ <span>Sair</span></button></div></aside>
     <div class="overlay" id="ov"></div>
@@ -85,7 +85,7 @@ const hd = (t, p, acts = "") => `<div class="hd"><div><h2>${t}</h2>${p ? `<p>${p
 
 /* ---------- Login ---------- */
 function loginView() {
-  return `<div class="login"><form class="box" id="loginForm"><div class="logo"><div class="mark">D</div><div><b>Detecta Rede</b><small>Gestão da rede de franquias</small></div></div>
+  return `<div class="login"><form class="box" id="loginForm"><div class="logo"><div class="mark">D</div><div><b>Detecta Rede</b><small>Gestão da rede de franquias</small></div></div><div class="brand" style="padding:0 0 14px"><img src="/logo-detecta.png" alt="Detecta — Manejo e Controle Integrado de Pragas Urbanas"></div>
     <div class="fg"><div><label class="f" for="email">E-mail</label><input class="in" id="email" type="email" autocomplete="username" required></div>
     <div><label class="f" for="password">Senha</label><input class="in" id="password" type="password" autocomplete="current-password" required></div>
     <button class="btn p" style="justify-content:center">Entrar</button></div><div id="loginErr"></div></form></div>`;
@@ -127,7 +127,7 @@ views.dash = async () => {
     `<div class="grid g4">
       ${isNet() ? `<div class="card kpi"><div class="l">Unidades ativas</div><div class="v">${n(dd.units, "ativa")} <span class="muted" style="font-size:14px">${n(dd.units, "implantacao") ? "+" + n(dd.units, "implantacao") + " em implantação" : ""}</span></div><div class="d">${dd.totalUsers} usuários ativos</div></div>` : ""}
       <div class="card kpi"><div class="l">Chamados abertos</div><div class="v">${openT}</div><div class="d ${dd.sla.late ? "dn" : ""}">${dd.sla.late ? dd.sla.late + " com SLA estourado" : "SLA em dia"}</div></div>
-      <div class="card kpi"><div class="l">Resolvidos no SLA (30 dias)</div><div class="v">${slaPct === null ? "—" : slaPct + "%"}</div><div class="d">${dd.sla.total} resolvidos</div></div>
+      <div class="card kpi"><div class="l">Resolvidos no SLA (30 dias)</div><div class="v">${slaPct === null ? "—" : slaPct + "%"}</div><div class="d">${dd.sla.total || 0} resolvidos</div></div>
       <div class="card kpi"><div class="l">Tarefas em aberto</div><div class="v">${state.counts.task}</div><div class="d">${n(dd.tasks, "concluida")} concluídas</div></div>
       ${isNet() ? "" : `<div class="card kpi"><div class="l">Comunicados não lidos</div><div class="v">${state.counts.com}</div><div class="d">Confirme a leitura</div></div>`}
     </div>
