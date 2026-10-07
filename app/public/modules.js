@@ -206,7 +206,7 @@ async function courseEditor(id, folders = []) {
     <div class="grid g2"><div><label class="f">Público</label><select class="in" name="audience">${Object.entries(AUD).map(([k, n]) => `<option value="${k}" ${c.audience === k ? "selected" : ""}>${n}</option>`).join("")}</select></div><div><label class="f">Nota mínima na prova (%)</label><input class="in num" name="pass_score" type="number" min="0" max="100" value="${c.pass_score}"></div></div>
     <div id="unitPick" style="${c.audience === "units" ? "" : "display:none"}"><label class="f">Unidades que recebem este curso</label><div class="row" style="gap:6px 14px">${units.filter(u => !u.is_hq).map(u => `<label class="small" style="white-space:nowrap"><input type="checkbox" name="unit_ids" value="${u.id}" ${(c.unit_ids || []).includes(u.id) ? "checked" : ""}> ${esc(u.name)}</label>`).join("")}</div></div>
     <div class="row"><label class="small"><input type="checkbox" name="mandatory" ${c.mandatory ? "checked" : ""}> Curso obrigatório</label>${id ? `<label class="small"><input type="checkbox" name="active" ${c.active ? "checked" : ""}> Curso ativo (visível)</label>` : ""}</div>
-    <h3 style="margin-top:6px">Aulas</h3><div class="tw"><table id="lessons"><tr><th>Título</th><th>Tipo</th><th>Conteúdo</th><th>Duração</th><th></th></tr>${lessons.map(lrow).join("")}</table></div><div><button type="button" class="btn s" id="addLesson">+ Adicionar aula</button> <span class="small muted">Vídeo: cole o link do YouTube/Vimeo ou envie o arquivo MP4 (até 2 GB; aguarde a barra chegar a 100% antes de salvar).</span></div>
+    <h3 style="margin-top:6px">Aulas</h3><div class="tw"><table id="lessons"><tr><th>Título</th><th>Tipo</th><th>Conteúdo</th><th>Duração</th><th></th></tr>${lessons.map(lrow).join("")}</table></div><div class="row"><button type="button" class="btn s" id="addLesson">+ Adicionar aula</button><label class="btn s p">⬆ Enviar vários vídeos<input type="file" id="multiVideo" multiple accept="video/mp4,video/webm,video/quicktime" style="display:none"></label><span class="small muted">Selecione 1 ou vários arquivos: cada vídeo vira uma aula, na ordem escolhida, com o título do arquivo (edite depois). Até 2 GB por vídeo; aguarde 100% antes de salvar.</span></div><div id="multiStatus" class="small muted"></div>
     <h3 style="margin-top:6px">Prova (opcional)</h3><div id="questions" class="fg">${questions.map(qrow).join("")}</div><div><button type="button" class="btn s" id="addQ">+ Adicionar questão</button></div></div>`,
     async (o, f) => {
       const ls = [...f.querySelectorAll("#lessons tr[data-i]")].map(tr => { const g = n => tr.querySelector(`[name=${n}]`); return { id: lessons[+tr.dataset.i]?.id, title: g("title").value, kind: g("kind").value, content: g("content")?.value || "", file_id: g("file_id")?.value || null, duration_min: g("duration_min").value || null }; });
@@ -221,6 +221,19 @@ async function courseEditor(id, folders = []) {
   bg.querySelector("[name=audience]").onchange = e => { bg.querySelector("#unitPick").style.display = e.target.value === "units" ? "" : "none"; };
   const tbl = bg.querySelector("#lessons"), qdiv = bg.querySelector("#questions");
   bg.querySelector("#addLesson").onclick = () => { lessons.push({ title: "", kind: "video" }); tbl.insertAdjacentHTML("beforeend", lrow(lessons[lessons.length - 1], lessons.length - 1)); };
+  const setProgress = (nm, file, p) => { nm.innerHTML = `<span class="up"><span class="bar" style="width:140px;display:inline-block;vertical-align:middle"><i style="width:${p}%"></i></span> <b>${p}%</b> ${esc(file.name)} (${(file.size / 1048576).toFixed(0)} MB)</span>`; };
+  bg.querySelector("#multiVideo").onchange = async (e) => {
+    const files = [...e.target.files].sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { numeric: true })); if (!files.length) return;
+    const saveBtn = bg.querySelector(".acts .btn.p"); const st = bg.querySelector("#multiStatus"); saveBtn.disabled = true; let ok = 0;
+    for (let k = 0; k < files.length; k++) {
+      const file = files[k]; const title = file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+      lessons.push({ title, kind: "video" }); const idx = lessons.length - 1; tbl.insertAdjacentHTML("beforeend", lrow(lessons[idx], idx));
+      const tr = tbl.querySelector(`tr[data-i="${idx}"]`); const nm = tr.querySelector("[data-fname]"); st.textContent = `Enviando vídeo ${k + 1} de ${files.length}: ${file.name}`; setProgress(nm, file, 0);
+      const up = await uploadFile(file, "lesson", null, MAX_VIDEO, (p) => { const i = nm.querySelector("i"), b = nm.querySelector("b"); if (i) i.style.width = p + "%"; if (b) b.textContent = p + "%"; });
+      if (up) { tr.querySelector("[name=file_id]").value = up.id; nm.textContent = `arquivo: ${up.filename} (${(up.size / 1048576).toFixed(0)} MB)`; ok++; } else nm.textContent = "falha no envio — remova a linha ou tente de novo";
+    }
+    st.textContent = `${ok} de ${files.length} vídeo(s) enviado(s). Confira os títulos e clique em Salvar.`; saveBtn.disabled = false; e.target.value = "";
+  };
   bg.querySelector("#addQ").onclick = () => { questions.push({ text: "", options: [], correct: 0 }); qdiv.insertAdjacentHTML("beforeend", qrow(questions[questions.length - 1], questions.length - 1)); };
   tbl.addEventListener("change", async e => {
     const tr = e.target.closest("tr[data-i]"); if (!tr) return;
