@@ -289,6 +289,13 @@ route("PUT", "/courses/:id", (ctx) => {
   if (Array.isArray(b.lessons)) saveLessons(c.id, b.lessons); if (Array.isArray(b.questions)) saveQuestions(c.id, b.questions);
   return courseFull(ctx, c.id, true);
 });
+route("DELETE", "/courses/:id", (ctx) => {
+  need(ctx, "university", 3); onlyHQ(ctx); const c = get("select * from courses where id=?", ctx.params.id); if (!c) throw new HttpError(404, "Curso não encontrado.");
+  for (const f of all("select * from files where kind='lesson' and id in (select file_id from lessons where course_id=? and file_id is not null)", c.id)) { run("delete from files where id=?", f.id); try { fs.unlinkSync(path.join(UPLOAD_DIR, f.stored)); } catch {} }
+  run("delete from lesson_progress where lesson_id in (select id from lessons where course_id=?)", c.id); run("delete from lesson_views where lesson_id in (select id from lessons where course_id=?)", c.id);
+  run("delete from course_results where course_id=?", c.id); run("delete from quiz_questions where course_id=?", c.id); run("delete from lessons where course_id=?", c.id); run("delete from courses where id=?", c.id);
+  log(ctx.user.id, null, "universidade", `Curso excluído: ${c.title}`);
+});
 route("POST", "/courses/:id/lessons/:lid/view", (ctx) => { // registra visualização (onde o usuário está/parou)
   need(ctx, "university", 0); const c = courseFull(ctx, ctx.params.id); const l = c.lessons.find(x => x.id === int(ctx.params.lid)); if (!l) throw new HttpError(404, "Aula não encontrada.");
   run("insert into lesson_views(user_id,lesson_id) values(?,?) on conflict(user_id,lesson_id) do update set views=views+1, last_at=datetime('now')", ctx.user.id, l.id);

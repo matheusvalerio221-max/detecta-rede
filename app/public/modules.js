@@ -218,6 +218,9 @@ async function courseEditor(id, folders = []) {
       toast(id ? "Curso atualizado" : "Curso criado"); state.uniTab = "manage"; loadView();
     });
   bg.querySelector(".modal").style.maxWidth = "960px";
+  if (id && can("university", 3)) { const del = document.createElement("button"); del.type = "button"; del.className = "btn"; del.style.color = "var(--bad)"; del.style.marginRight = "auto"; del.textContent = "Excluir curso";
+    del.onclick = async () => { if (!confirm(`Excluir o curso "${c.title}"? Apaga aulas, vídeos enviados, prova e o progresso dos alunos. Não pode ser desfeito.`)) return; await api(`/courses/${id}`, { method: "DELETE" }); toast("Curso excluído"); bg.remove(); loadView(); };
+    bg.querySelector(".acts").prepend(del); }
   bg.querySelector("[name=audience]").onchange = e => { bg.querySelector("#unitPick").style.display = e.target.value === "units" ? "" : "none"; };
   const tbl = bg.querySelector("#lessons"), qdiv = bg.querySelector("#questions");
   bg.querySelector("#addLesson").onclick = () => { lessons.push({ title: "", kind: "video" }); tbl.insertAdjacentHTML("beforeend", lrow(lessons[lessons.length - 1], lessons.length - 1)); };
