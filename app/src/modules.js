@@ -20,7 +20,12 @@ const num = (v, d = 0) => Number.isFinite(parseFloat(v)) ? parseFloat(v) : d;
    kind: "answer" (ref = checklist_answers.id) | "lesson" (ref = lessons.id ou null enquanto rascunho)
    ===================================================================== */
 const ALLOWED = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "application/pdf": ".pdf" };
-const ALLOWED_LESSON = { ...ALLOWED, "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov", "audio/mpeg": ".mp3" };
+const ALLOWED_LESSON = { ...ALLOWED, "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov", "audio/mpeg": ".mp3",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx", "application/vnd.ms-powerpoint": ".ppt",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx", "application/msword": ".doc",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx", "application/vnd.ms-excel": ".xls", "application/octet-stream": "" };
+const EXT_MIME = { pdf: "application/pdf", mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime", mp3: "audio/mpeg", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ppt: "application/vnd.ms-powerpoint", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc: "application/msword", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls: "application/vnd.ms-excel" };
 function fileAccess(ctx, f) {
   if (f.kind === "answer") {
     const r = get("select r.unit_id from checklist_answers a join checklist_runs r on r.id=a.run_id where a.id=?", f.ref_id);
@@ -30,15 +35,17 @@ function fileAccess(ctx, f) {
 }
 route("POST", "/files", (ctx) => {
   const kind = ctx.query.kind; if (!["answer", "lesson"].includes(kind)) bad("Tipo de arquivo inválido.");
-  const mime = (ctx.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  let mime = (ctx.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
   const allowed = kind === "lesson" ? ALLOWED_LESSON : ALLOWED;
-  if (!allowed[mime]) bad(kind === "lesson" ? "Envie vídeo (MP4, WEBM, MOV), áudio MP3, PDF ou imagem." : "Envie imagem (JPG, PNG, WEBP, GIF) ou PDF.");
+  const extOf = decodeURIComponent(ctx.query.filename || "").split(".").pop().toLowerCase();
+  if (kind === "lesson" && (mime === "application/octet-stream" || !mime) && EXT_MIME[extOf]) mime = EXT_MIME[extOf]; // navegador sem tipo: deduz pela extensão
+  if (!allowed[mime] || (kind === "lesson" && mime === "application/octet-stream")) bad(kind === "lesson" ? "Formato não aceito. Envie vídeo (MP4/WEBM/MOV), áudio MP3, PDF, imagem, PowerPoint, Word ou Excel." : "Envie imagem (JPG, PNG, WEBP, GIF) ou PDF.");
   if (!ctx.rawFile?.size) bad("Arquivo vazio.");
   const ref = ctx.query.ref ? int(ctx.query.ref) : null;
   if (kind === "answer") { need(ctx, "checklist", 1); if (ctx.rawFile.size > 12e6) bad("Foto muito grande (máx. 10 MB)."); const r = get("select r.unit_id, r.status from checklist_answers a join checklist_runs r on r.id=a.run_id where a.id=?", ref); if (!r) bad("Resposta não encontrada."); scoped(ctx, r.unit_id); if (r.status !== "rascunho") bad("Checklist já concluído."); }
   if (kind === "lesson") { need(ctx, "university", 1); onlyHQ(ctx); }
   const filename = decodeURIComponent(ctx.query.filename || "arquivo").replace(/[\\/:*?"<>|]/g, "_").slice(0, 120);
-  const stored = crypto.randomUUID() + allowed[mime];
+  const stored = crypto.randomUUID() + (allowed[mime] || ("." + extOf));
   fs.copyFileSync(ctx.rawFile.path, path.join(UPLOAD_DIR, stored));
   const r = run("insert into files(kind,ref_id,user_id,filename,mime,size,stored) values(?,?,?,?,?,?,?)", kind, ref, ctx.user.id, filename, mime, ctx.rawFile.size, stored);
   return get("select id,kind,ref_id,filename,mime,size,created_at from files where id=?", r.lastInsertRowid);
