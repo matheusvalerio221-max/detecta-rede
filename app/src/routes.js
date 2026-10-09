@@ -29,6 +29,44 @@ route("POST", "/auth/login", (ctx) => {
   return { ok: true };
 }, { auth: false });
 route("POST", "/auth/logout", (ctx) => { ctx.setCookie = cookieHeader("", true); return { ok: true }; }, { auth: false });
+
+/* Esqueci minha senha: link por e-mail válido por 1 hora, uso único.
+   A resposta é sempre a mesma, exista ou não o e-mail (não revela quem tem cadastro). */
+const sha = (t) => crypto.createHash("sha256").update(t).digest("hex");
+route("POST", "/auth/forgot", (ctx) => {
+  const email = String(ctx.body.email || "").trim().toLowerCase();
+  const generic = { ok: true, message: "Se o e-mail estiver cadastrado, você receberá um link para criar uma nova senha em alguns minutos." };
+  if (!email) bad("Informe o e-mail.");
+  const u = get("select id, name, email from users where lower(email)=? and active=1 and approval='aprovado'", email);
+  if (!u) return generic;
+  if (get("select count(*) n from password_resets where user_id=? and created_at>datetime('now','-1 hour')", u.id).n >= 3) return generic; // limite
+  const token = crypto.randomBytes(32).toString("base64url");
+  run("insert into password_resets(user_id, token_hash, ip, expires_at) values(?,?,?,datetime('now','+1 hour'))", u.id, sha(token), ctx.ip);
+  const host = String(ctx.headers?.host || "").replace(/[^\w.:-]/g, "");
+  const base = (host && !/^(localhost|127\.)/.test(host) ? `https://${host}` : (mailConfig().site || "")).replace(/\/$/, "");
+  const link = `${base}/#reset=${token}`;
+  enqueue([u.email], "Redefinição de senha — Detecta Rede", layout("Redefinir sua senha",
+    `<p>Olá, ${E(u.name)}.</p><p>Recebemos um pedido para criar uma nova senha no Detecta Rede. Clique no botão abaixo; o link vale por <b>1 hora</b> e só pode ser usado uma vez.</p>
+     <p style="margin:20px 0"><a href="${link}" style="background:#0e5c47;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;display:inline-block">Criar nova senha</a></p>
+     <p style="font-size:12px;color:#6b7a74">Se o botão não funcionar, copie e cole no navegador:<br>${E(link)}</p>
+     <p style="font-size:12px;color:#6b7a74">Se não foi você que pediu, ignore este e-mail: sua senha atual continua valendo.</p>`),
+    `Para criar uma nova senha no Detecta Rede acesse (válido por 1 hora): ${link}`, `reset:${u.id}`);
+  log(u.id, null, "usuario", "Pedido de redefinição de senha enviado por e-mail");
+  return generic;
+}, { auth: false });
+route("POST", "/auth/reset", (ctx) => {
+  const { token, password } = ctx.body || {};
+  if (!token || typeof token !== "string") bad("Link inválido.");
+  if (!password || String(password).length < 8) bad("A nova senha precisa ter ao menos 8 caracteres.");
+  const r = get("select * from password_resets where token_hash=?", sha(token));
+  if (!r || r.used_at) bad("Este link já foi usado ou é inválido. Peça um novo em “Esqueci minha senha”.");
+  if (get("select datetime('now') > ? x", r.expires_at).x) bad("Este link expirou. Peça um novo em “Esqueci minha senha”.");
+  const u = get("select id, email from users where id=? and active=1", r.user_id); if (!u) bad("Usuário inativo.");
+  run("update users set password_hash=? where id=?", hashPassword(String(password)), u.id);
+  run("update password_resets set used_at=datetime('now') where user_id=? and used_at is null", u.id); // invalida todos os links pendentes
+  log(u.id, null, "usuario", "Senha redefinida pelo link de e-mail");
+  return { ok: true, email: u.email };
+}, { auth: false });
 route("GET", "/me", (ctx) => { const u = ctx.user; return { id: u.id, name: u.name, email: u.email, role: u.role_key, role_name: u.role_name, scope: u.scope, unit_id: u.unit_id, unit_name: u.unit_name, perms: u.perms }; });
 route("POST", "/me/password", (ctx) => {
   const { current, next } = ctx.body;

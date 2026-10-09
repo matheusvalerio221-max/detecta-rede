@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS lesson_views (user_id INTEGER NOT NULL, lesson_id INT
 CREATE TABLE IF NOT EXISTS course_results (
   id INTEGER PRIMARY KEY AUTOINCREMENT, course_id INTEGER NOT NULL, user_id INTEGER NOT NULL, score INTEGER NOT NULL, passed INTEGER NOT NULL,
   attempted_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE TABLE IF NOT EXISTS password_resets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE, ip TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, used_at TEXT);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS mail_outbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT, to_email TEXT NOT NULL, subject TEXT NOT NULL, html TEXT NOT NULL, text TEXT, ref TEXT,
@@ -89,6 +92,8 @@ export function migrate() {
   const cols = all("pragma table_info(users)").map(c => c.name);
   if (!cols.includes("approval")) db.exec("alter table users add column approval TEXT NOT NULL DEFAULT 'aprovado'"); // aprovado | pendente | recusado
   if (!cols.includes("requested_by")) db.exec("alter table users add column requested_by INTEGER");
+  const fc = all("pragma table_info(files)").map(c => c.name);
+  for (const [c, t] of [["proc_status", "TEXT"], ["proc_error", "TEXT"], ["wm_stored", "TEXT"], ["pages", "INTEGER"]]) if (!fc.includes(c)) db.exec(`alter table files add column ${c} ${t}`);
   const cu = all("pragma table_info(courses)").map(c => c.name);
   if (!cu.includes("unit_ids")) db.exec("alter table courses add column unit_ids TEXT NOT NULL DEFAULT '[]'");
   const ccols = all("pragma table_info(ticket_categories)").map(c => c.name);

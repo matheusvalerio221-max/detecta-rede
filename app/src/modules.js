@@ -4,7 +4,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { all, get, run, log, UPLOAD_DIR } from "./db.js";
 import { HttpError } from "./server.js";
-import { isNetwork } from "./auth.js";
+import { isNetwork, can } from "./auth.js";
+import { enqueueMedia, removeDerived, pagePath, wmVideoPath, needsProcessing } from "./media.js";
 import { route, need, bad, scoped } from "./routes.js";
 import { enqueue, layout, recipients } from "./mail.js";
 const E = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -20,26 +21,61 @@ const num = (v, d = 0) => Number.isFinite(parseFloat(v)) ? parseFloat(v) : d;
    kind: "answer" (ref = checklist_answers.id) | "lesson" (ref = lessons.id ou null enquanto rascunho)
    ===================================================================== */
 const ALLOWED = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif", "application/pdf": ".pdf" };
-const ALLOWED_LESSON = { ...ALLOWED, "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov", "audio/mpeg": ".mp3",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx", "application/vnd.ms-powerpoint": ".ppt",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx", "application/msword": ".doc",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx", "application/vnd.ms-excel": ".xls", "application/octet-stream": "" };
+const ALLOWED_LESSON = { ...ALLOWED, "video/mp4": ".mp4", "video/webm": ".webm", "video/quicktime": ".mov", "audio/mpeg": ".mp3", "application/octet-stream": "" };
+const OFFICE_EXT = ["pptx", "ppt", "docx", "doc", "xlsx", "xls"];
 const EXT_MIME = { pdf: "application/pdf", mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime", mp3: "audio/mpeg", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif",
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ppt: "application/vnd.ms-powerpoint", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc: "application/msword", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls: "application/vnd.ms-excel" };
 function fileAccess(ctx, f) {
   if (f.kind === "answer") {
     const r = get("select r.unit_id from checklist_answers a join checklist_runs r on r.id=a.run_id where a.id=?", f.ref_id);
     if (!r) throw new HttpError(404, "Arquivo órfão."); scoped(ctx, r.unit_id);
-  } else if (f.kind === "lesson") { need(ctx, "university", 0); }
+  } else if (f.kind === "lesson") { if (!canManageUni(ctx)) throw new HttpError(403, "Download não permitido. Assista ao material dentro da plataforma."); }
   else throw new HttpError(403, "Sem acesso.");
 }
+/* ---- Proteção dos materiais da Universidade ----
+   Só quem gerencia cursos (franqueadora com permissão de editar Universidade) baixa o original.
+   Demais usuários: vídeo apenas via <video> do player e páginas de PDF apenas como imagem na tela,
+   sempre a versão com marca d'água, e só de cursos liberados para eles. */
+const canManageUni = (ctx) => net(ctx) && can(ctx.user, "university", 2);
+function lessonFileFor(ctx, fileId) {
+  need(ctx, "university", 0);
+  const f = get("select * from files where id=? and kind='lesson'", fileId); if (!f) throw new HttpError(404, "Material não encontrado.");
+  if (canManageUni(ctx)) return f;
+  const c = get("select c.* from lessons l join courses c on c.id=l.course_id where l.file_id=? and l.active=1 and c.active=1 limit 1", f.id);
+  if (!c || !audienceOk(c, ctx.user)) throw new HttpError(403, "Sem acesso a este material.");
+  return f;
+}
+function viaPlayerOnly(ctx, dests) {
+  if (canManageUni(ctx)) return;
+  const d = String(ctx.headers["sec-fetch-dest"] || "");
+  if (!dests.includes(d)) throw new HttpError(403, "Este material só pode ser visto dentro da plataforma.");
+}
+route("GET", "/lm/:id", (ctx) => { // vídeo/áudio para o player
+  const f = lessonFileFor(ctx, ctx.params.id); viaPlayerOnly(ctx, ["video", "audio"]);
+  if (/^video\//.test(f.mime)) {
+    if (f.proc_status !== "pronto" || !f.wm_stored) throw new HttpError(409, "Vídeo em processamento. Tente novamente em alguns minutos.");
+    return { __file: wmVideoPath(f), mime: "video/mp4", filename: "aula.mp4", inline: true, cache: "private, no-store" };
+  }
+  if (/^audio\//.test(f.mime)) return { __file: path.join(UPLOAD_DIR, f.stored), mime: f.mime, filename: "aula.mp3", inline: true, cache: "private, no-store" };
+  throw new HttpError(400, "Tipo de material inválido.");
+});
+route("GET", "/lp/:id/:n", (ctx) => { // página de PDF/imagem com marca d'água
+  const f = lessonFileFor(ctx, ctx.params.id); viaPlayerOnly(ctx, ["image"]);
+  const n = int(ctx.params.n); if (f.proc_status !== "pronto" || !f.pages) throw new HttpError(409, "Material em processamento.");
+  if (n < 1 || n > f.pages) throw new HttpError(404, "Página inexistente.");
+  return { __file: pagePath(f.id, n), mime: "image/jpeg", filename: `pagina-${n}.jpg`, inline: true, cache: "private, no-store" };
+});
+route("GET", "/lm-status/:id", (ctx) => { const f = lessonFileFor(ctx, ctx.params.id); return { proc_status: f.proc_status, pages: f.pages, error: canManageUni(ctx) ? f.proc_error : undefined }; });
+route("POST", "/lm/:id/reprocess", (ctx) => { if (!canManageUni(ctx)) throw new HttpError(403, "Sem permissão."); enqueueMedia(int(ctx.params.id)); });
+
 route("POST", "/files", (ctx) => {
   const kind = ctx.query.kind; if (!["answer", "lesson"].includes(kind)) bad("Tipo de arquivo inválido.");
   let mime = (ctx.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
   const allowed = kind === "lesson" ? ALLOWED_LESSON : ALLOWED;
   const extOf = decodeURIComponent(ctx.query.filename || "").split(".").pop().toLowerCase();
+  if (kind === "lesson" && OFFICE_EXT.includes(extOf)) bad("PowerPoint, Word e Excel não são aceitos: o franqueado não pode baixar arquivos. Salve como PDF (Arquivo → Salvar como → PDF) e envie o PDF.");
   if (kind === "lesson" && (mime === "application/octet-stream" || !mime) && EXT_MIME[extOf]) mime = EXT_MIME[extOf]; // navegador sem tipo: deduz pela extensão
-  if (!allowed[mime] || (kind === "lesson" && mime === "application/octet-stream")) bad(kind === "lesson" ? "Formato não aceito. Envie vídeo (MP4/WEBM/MOV), áudio MP3, PDF, imagem, PowerPoint, Word ou Excel." : "Envie imagem (JPG, PNG, WEBP, GIF) ou PDF.");
+  if (!allowed[mime] || (kind === "lesson" && mime === "application/octet-stream")) bad(kind === "lesson" ? "Formato não aceito. Envie vídeo (MP4/WEBM/MOV), PDF, imagem ou áudio MP3." : "Envie imagem (JPG, PNG, WEBP, GIF) ou PDF.");
   if (!ctx.rawFile?.size) bad("Arquivo vazio.");
   const ref = ctx.query.ref ? int(ctx.query.ref) : null;
   if (kind === "answer") { need(ctx, "checklist", 1); if (ctx.rawFile.size > 12e6) bad("Foto muito grande (máx. 10 MB)."); const r = get("select r.unit_id, r.status from checklist_answers a join checklist_runs r on r.id=a.run_id where a.id=?", ref); if (!r) bad("Resposta não encontrada."); scoped(ctx, r.unit_id); if (r.status !== "rascunho") bad("Checklist já concluído."); }
@@ -48,7 +84,8 @@ route("POST", "/files", (ctx) => {
   const stored = crypto.randomUUID() + (allowed[mime] || ("." + extOf));
   fs.copyFileSync(ctx.rawFile.path, path.join(UPLOAD_DIR, stored));
   const r = run("insert into files(kind,ref_id,user_id,filename,mime,size,stored) values(?,?,?,?,?,?,?)", kind, ref, ctx.user.id, filename, mime, ctx.rawFile.size, stored);
-  return get("select id,kind,ref_id,filename,mime,size,created_at from files where id=?", r.lastInsertRowid);
+  if (kind === "lesson") enqueueMedia(r.lastInsertRowid); // marca d'água em segundo plano
+  return get("select id,kind,ref_id,filename,mime,size,created_at,proc_status from files where id=?", r.lastInsertRowid);
 }, { raw: true, stream: true, max: 2.2e9 });
 route("GET", "/files/:id", (ctx) => {
   const f = get("select * from files where id=?", ctx.params.id); if (!f) throw new HttpError(404, "Arquivo não encontrado.");
@@ -213,8 +250,8 @@ const embedUrl = (url = "") => { // YouTube / Vimeo → iframe src; outros: null
 function courseFull(ctx, id, forEdit = false) {
   const c = get("select c.*, u.name created_by_name from courses c left join users u on u.id=c.created_by where c.id=?", id); if (!c) throw new HttpError(404, "Curso não encontrado.");
   if (!forEdit && !net(ctx) && (!c.active || !audienceOk(c, ctx.user))) throw new HttpError(403, "Curso não disponível para o seu perfil.");
-  c.unit_ids = J(c.unit_ids);
-  c.lessons = all(`select l.*, f.filename file_name, f.mime file_mime from lessons l left join files f on f.id=l.file_id where l.course_id=? ${forEdit ? "" : "and l.active=1"} order by l.ord, l.id`, id)
+  c.unit_ids = J(c.unit_ids); c.can_download = canManageUni(ctx);
+  c.lessons = all(`select l.*, f.filename file_name, f.mime file_mime, f.proc_status file_status, f.pages file_pages, f.proc_error file_error from lessons l left join files f on f.id=l.file_id where l.course_id=? ${forEdit ? "" : "and l.active=1"} order by l.ord, l.id`, id)
     .map(l => ({ ...l, embed: l.kind === "video" ? embedUrl(l.content || "") : null }));
   const done = new Set(all("select lesson_id from lesson_progress where user_id=?", ctx.user.id).map(x => x.lesson_id));
   c.lessons.forEach(l => l.done = done.has(l.id));
@@ -298,7 +335,7 @@ route("PUT", "/courses/:id", (ctx) => {
 });
 route("DELETE", "/courses/:id", (ctx) => {
   need(ctx, "university", 3); onlyHQ(ctx); const c = get("select * from courses where id=?", ctx.params.id); if (!c) throw new HttpError(404, "Curso não encontrado.");
-  for (const f of all("select * from files where kind='lesson' and id in (select file_id from lessons where course_id=? and file_id is not null)", c.id)) { run("delete from files where id=?", f.id); try { fs.unlinkSync(path.join(UPLOAD_DIR, f.stored)); } catch {} }
+  for (const f of all("select * from files where kind='lesson' and id in (select file_id from lessons where course_id=? and file_id is not null)", c.id)) { run("delete from files where id=?", f.id); try { fs.unlinkSync(path.join(UPLOAD_DIR, f.stored)); } catch {} removeDerived(f); }
   run("delete from lesson_progress where lesson_id in (select id from lessons where course_id=?)", c.id); run("delete from lesson_views where lesson_id in (select id from lessons where course_id=?)", c.id);
   run("delete from course_results where course_id=?", c.id); run("delete from quiz_questions where course_id=?", c.id); run("delete from lessons where course_id=?", c.id); run("delete from courses where id=?", c.id);
   log(ctx.user.id, null, "universidade", `Curso excluído: ${c.title}`);

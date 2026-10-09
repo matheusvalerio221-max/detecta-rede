@@ -114,7 +114,7 @@ async function runModal(id) {
    ===================================================================== */
 const AUD = { all: "Toda a rede", units: "Unidades selecionadas", franqueado: "Todos os franqueados", tecnico: "Todos os técnicos", unidade: "Todas as unidades (franqueado + técnico)", franqueadora: "Equipe da franqueadora" };
 const MAX_VIDEO = 2 * 1024 * 1024 * 1024; // 2 GB
-const LK = { video: "🎬 Vídeo", text: "📝 Texto", pdf: "📄 Arquivo (PDF, PowerPoint, Word…)", link: "🔗 Link" };
+const LK = { video: "🎬 Vídeo", text: "📝 Texto", pdf: "📄 PDF / imagem", link: "🔗 Link" };
 views.uni = async () => {
   const sub = state.uniTab || "courses";
   const courses = await api(`/courses${isNet() && sub === "manage" ? "?all=1" : ""}`);
@@ -150,20 +150,45 @@ views.uni = async () => {
   $("#newCourse") && ($("#newCourse").onclick = () => courseEditor(null, folders));
 };
 
+/* --- Visualização protegida: sem download para o franqueado, marca d'água em tudo --- */
+const wmOverlay = () => `<div class="wm-id" aria-hidden="true">${esc(state.me.name)} · ${esc(state.me.email)}</div>`;
+const procMsg = (l) => l.file_status === "erro" ? `<div class="empty">Falha ao processar este material.${l.file_error ? `<br><span class="small">${esc(l.file_error)}</span>` : ""}</div>`
+  : `<div class="empty">⏳ Preparando o material com marca d'água… <br><span class="small">Pode levar alguns minutos em vídeos longos. Volte daqui a pouco.</span></div>`;
+function protectedContent(l, c) {
+  const dl = c.can_download && l.file_id ? `<p class="small" style="margin-top:8px"><a class="btn s" href="/api/files/${l.file_id}?dl=1">⬇ Baixar original (somente franqueadora)</a></p>` : "";
+  const m = l.file_mime || "";
+  if (l.kind === "video" && l.embed) return `<div class="secure"><div class="vid"><iframe src="${l.embed}" allow="accelerometer; autoplay; encrypted-media; gyroscope" referrerpolicy="strict-origin"></iframe></div><img class="wm-logo" src="/logo-detecta.png" alt="">${wmOverlay()}</div>${c.can_download ? '<p class="small muted">Vídeo externo (YouTube/Vimeo): a marca d\'água aparece só sobre o player. Para gravar o logo no arquivo, envie o MP4.</p>' : ""}`;
+  if (l.kind === "video" && !l.file_id) return `<a class="btn" href="${esc(l.content)}" target="_blank" rel="noopener">Abrir vídeo</a>`;
+  if (l.kind === "link") return `<p><a class="btn p" href="${esc(l.content)}" target="_blank" rel="noopener">Abrir material ↗</a></p><p class="small muted">${esc(l.content)}</p>`;
+  if (l.kind === "text") return `<div class="md" style="line-height:1.6">${esc(l.content || "")}</div>`;
+  if (!l.file_id) return '<div class="empty">Arquivo não enviado.</div>';
+  if (/^audio\//.test(m)) return `<div class="secure"><audio controls controlsList="nodownload" style="width:100%" src="/api/lm/${l.file_id}"></audio></div>${dl}`;
+  if (/^video\//.test(m)) return l.file_status === "pronto"
+    ? `<div class="secure" data-fs><video controls controlsList="nodownload nofullscreen noremoteplayback" disablePictureInPicture disableRemotePlayback preload="metadata" playsinline src="/api/lm/${l.file_id}"></video>${wmOverlay()}<button type="button" class="fs-btn" data-fsbtn title="Tela cheia">⛶</button></div>${dl}` : procMsg(l) + dl;
+  if (m === "application/pdf" || /^image\//.test(m)) return l.file_status === "pronto" && l.file_pages
+    ? `<div class="secure pages" data-fs>${Array.from({ length: l.file_pages }, (_, i) => `<div class="pg"><img loading="lazy" draggable="false" src="/api/lp/${l.file_id}/${i + 1}" alt="Página ${i + 1}">${wmOverlay()}</div>`).join("")}<button type="button" class="fs-btn" data-fsbtn title="Tela cheia">⛶</button></div><p class="small muted">${l.file_pages} página(s)</p>${dl}` : procMsg(l) + dl;
+  return `<div class="empty">Este formato não pode ser exibido na plataforma.${c.can_download ? " Converta para PDF e envie novamente." : ""}</div>${dl}`;
+}
+/* Bloqueios dentro da área protegida: botão direito, arrastar, Ctrl+S/P/U, impressão (CSS @media print). */
+document.addEventListener("contextmenu", (e) => { if (e.target.closest(".secure")) e.preventDefault(); });
+document.addEventListener("dragstart", (e) => { if (e.target.closest(".secure")) e.preventDefault(); });
+document.addEventListener("keydown", (e) => { if (!document.querySelector(".secure")) return; const k = (e.key || "").toLowerCase(); if ((e.ctrlKey || e.metaKey) && ["s", "p", "u"].includes(k)) { e.preventDefault(); toast("Download e impressão não são permitidos."); } });
+document.addEventListener("click", (e) => { const b = e.target.closest("[data-fsbtn]"); if (!b) return; const box = b.closest("[data-fs]"); if (document.fullscreenElement) document.exitFullscreen(); else box.requestFullscreen?.(); });
+
 /* --- assistir curso --- */
 async function courseModal(id) {
   const c = await api(`/courses/${id}`); let cur = state.lesson?.[id] ?? (c.lessons.find(l => !l.done)?.id ?? c.lessons[0]?.id);
   const render = () => {
     const l = c.lessons.find(x => x.id === cur);
-    const content = !l ? '<div class="empty">Este curso ainda não tem aulas.</div>'
-      : l.kind === "video" ? (l.embed ? `<div class="vid"><iframe src="${l.embed}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>` : l.file_id ? `<video controls preload="metadata" style="width:100%;border-radius:10px;background:#000" src="/api/files/${l.file_id}"></video>` : `<a class="btn" href="${esc(l.content)}" target="_blank">Abrir vídeo</a>`)
-      : l.kind === "pdf" ? (l.file_id ? (l.file_mime?.startsWith("image/") ? `<img src="/api/files/${l.file_id}" style="max-width:100%;border-radius:10px">` : l.file_mime?.startsWith("video/") ? `<video controls preload="metadata" style="width:100%;border-radius:10px;background:#000" src="/api/files/${l.file_id}"></video>` : l.file_mime?.startsWith("audio/") ? `<audio controls style="width:100%" src="/api/files/${l.file_id}"></audio>` : l.file_mime === "application/pdf" ? `<iframe src="/api/files/${l.file_id}" style="width:100%;height:60vh;border:1px solid var(--line);border-radius:10px"></iframe><p class="small"><a class="btn s" href="/api/files/${l.file_id}?dl=1">Baixar ${esc(l.file_name || "arquivo")}</a></p>` : `<div class="card" style="text-align:center;padding:30px"><div style="font-size:40px">${/presentation|powerpoint/.test(l.file_mime || "") ? "📊" : /word/.test(l.file_mime || "") ? "📝" : /sheet|excel/.test(l.file_mime || "") ? "📈" : "📄"}</div><p><b>${esc(l.file_name || "arquivo")}</b></p><p class="small muted">Este material abre no seu computador (PowerPoint, Word ou Excel).</p><a class="btn p" href="/api/files/${l.file_id}?dl=1">⬇ Baixar e abrir</a></div>`) : '<div class="empty">Arquivo não enviado.</div>')
-      : l.kind === "link" ? `<p><a class="btn p" href="${esc(l.content)}" target="_blank" rel="noopener">Abrir material ↗</a></p><p class="small muted">${esc(l.content)}</p>`
-      : `<div class="md" style="line-height:1.6">${esc(l.content || "")}</div>`;
+    const content = !l ? '<div class="empty">Este curso ainda não tem aulas.</div>' : protectedContent(l, c);
     bg.querySelector("#lesson").innerHTML = l ? `<h3 style="margin-bottom:8px">${esc(l.title)} <span class="sub">${LK[l.kind]}${l.duration_min ? ` · ${l.duration_min} min` : ""}</span></h3>${content}
       <div class="row" style="margin-top:12px"><button class="btn ${l.done ? "" : "p"}" id="lessonDone">${l.done ? "✓ Concluída (desfazer)" : "Marcar aula como concluída"}</button>${c.lessons[c.lessons.findIndex(x => x.id === l.id) + 1] ? '<button class="btn" id="lessonNext">Próxima aula →</button>' : ""}</div>` : content;
     bg.querySelectorAll("[data-l]").forEach(b => b.classList.toggle("on", +b.dataset.l === cur));
     if (l) fetch(`/api/courses/${c.id}/lessons/${l.id}/view`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+    clearTimeout(bg._poll);
+    if (l && l.file_id && ["na_fila", "processando", null].includes(l.file_status) && /^(video|image)\/|pdf/.test(l.file_mime || "")) bg._poll = setTimeout(async () => {
+      if (!document.body.contains(bg)) return; const st = await api(`/lm-status/${l.file_id}`).catch(() => null);
+      if (st && st.proc_status !== l.file_status) { l.file_status = st.proc_status; l.file_pages = st.pages; l.file_error = st.error; } if (document.body.contains(bg) && cur === l.id) render(); }, 8000);
     const d = bg.querySelector("#lessonDone"); if (d) d.onclick = async () => { const upd = await api(`/courses/${c.id}/lessons/${l.id}/done`, { method: "POST", body: { undo: l.done } }); Object.assign(c, upd); bg.querySelector("#progress").innerHTML = progressHtml(); bg.querySelectorAll("[data-l]").forEach(b => b.querySelector("i").textContent = c.lessons.find(x => x.id === +b.dataset.l).done ? "✓" : ""); const ni = c.lessons.findIndex(x => x.id === l.id) + 1; if (!l.done && c.lessons[ni]) cur = c.lessons[ni].id; render(); if (upd.progress.completed) toast("Curso concluído! 🎉"); };
     const nx = bg.querySelector("#lessonNext"); if (nx) nx.onclick = () => { cur = c.lessons[c.lessons.findIndex(x => x.id === l.id) + 1].id; render(); };
     const qz = bg.querySelector("#quizBtn"); if (qz) qz.onclick = () => quizModal(c, () => { bg.remove(); courseModal(id); });
@@ -194,7 +219,7 @@ async function courseEditor(id, folders = []) {
     <td style="white-space:nowrap"><button type="button" class="btn s" data-up>↑</button><button type="button" class="btn s" data-dn>↓</button><button type="button" class="btn s" data-del>✕</button></td></tr>`;
   function lcontent(l) {
     if (l.kind === "video") return `<input class="in" name="content" value="${esc(l.content || "")}" placeholder="Link YouTube/Vimeo (ou envie o arquivo →)"><div class="row small" style="gap:6px;margin-top:4px"><label class="btn s">⬆ Enviar MP4<input type="file" accept="video/mp4,video/webm,video/quicktime" data-file style="display:none"></label><span data-fname class="muted">${l.file_id ? `arquivo: ${esc(l.file_name || "enviado")}` : ""}</span><input type="hidden" name="file_id" value="${l.file_id || ""}"></div>`;
-    if (l.kind === "pdf") return `<div class="row small" style="gap:6px"><label class="btn s">⬆ Enviar arquivo<input type="file" accept=".pdf,.pptx,.ppt,.docx,.doc,.xlsx,.xls,image/*,video/mp4,video/webm,video/quicktime,audio/mpeg" data-file style="display:none"></label><span data-fname class="muted">${l.file_id ? `arquivo: ${esc(l.file_name || "enviado")}` : "PDF, PowerPoint, Word, Excel, imagem, vídeo ou áudio"}</span><input type="hidden" name="file_id" value="${l.file_id || ""}"><input type="hidden" name="content" value=""></div>`;
+    if (l.kind === "pdf") return `<div class="row small" style="gap:6px"><label class="btn s">⬆ Enviar arquivo<input type="file" accept=".pdf,image/*,video/mp4,video/webm,video/quicktime,audio/mpeg" data-file style="display:none"></label><span data-fname class="muted">${l.file_id ? `arquivo: ${esc(l.file_name || "enviado")}${l.file_status && l.file_status !== "pronto" ? ` · ${l.file_status === "erro" ? "⚠ erro no processamento" : "⏳ processando"}` : ""}` : "PDF, imagem, vídeo ou áudio"}</span><input type="hidden" name="file_id" value="${l.file_id || ""}"><input type="hidden" name="content" value=""></div>`;
     if (l.kind === "link") return `<input class="in" name="content" value="${esc(l.content || "")}" placeholder="https://…">`;
     return `<textarea class="in" name="content" rows="3" placeholder="Texto da aula">${esc(l.content || "")}</textarea>`;
   }
@@ -206,7 +231,7 @@ async function courseEditor(id, folders = []) {
     <div class="grid g2"><div><label class="f">Público</label><select class="in" name="audience">${Object.entries(AUD).map(([k, n]) => `<option value="${k}" ${c.audience === k ? "selected" : ""}>${n}</option>`).join("")}</select></div><div><label class="f">Nota mínima na prova (%)</label><input class="in num" name="pass_score" type="number" min="0" max="100" value="${c.pass_score}"></div></div>
     <div id="unitPick" style="${c.audience === "units" ? "" : "display:none"}"><label class="f">Unidades que recebem este curso</label><div class="row" style="gap:6px 14px">${units.filter(u => !u.is_hq).map(u => `<label class="small" style="white-space:nowrap"><input type="checkbox" name="unit_ids" value="${u.id}" ${(c.unit_ids || []).includes(u.id) ? "checked" : ""}> ${esc(u.name)}</label>`).join("")}</div></div>
     <div class="row"><label class="small"><input type="checkbox" name="mandatory" ${c.mandatory ? "checked" : ""}> Curso obrigatório</label>${id ? `<label class="small"><input type="checkbox" name="active" ${c.active ? "checked" : ""}> Curso ativo (visível)</label>` : ""}</div>
-    <h3 style="margin-top:6px">Aulas</h3><div class="tw"><table id="lessons"><tr><th>Título</th><th>Tipo</th><th>Conteúdo</th><th>Duração</th><th></th></tr>${lessons.map(lrow).join("")}</table></div><div class="row"><button type="button" class="btn s" id="addLesson">+ Adicionar aula</button><label class="btn s p">⬆ Enviar vários arquivos<input type="file" id="multiVideo" multiple accept=".pdf,.pptx,.ppt,.docx,.doc,.xlsx,.xls,image/*,video/mp4,video/webm,video/quicktime,audio/mpeg" style="display:none"></label><span class="small muted">Selecione 1 ou vários (vídeos, PDFs, PowerPoint…): cada arquivo vira uma aula, na ordem dos nomes, com o título do arquivo (edite depois). Até 2 GB por arquivo; aguarde 100% antes de salvar. PDF abre dentro do sistema; PowerPoint/Word o aluno baixa.</span></div><div id="multiStatus" class="small muted"></div>
+    <h3 style="margin-top:6px">Aulas</h3><div class="tw"><table id="lessons"><tr><th>Título</th><th>Tipo</th><th>Conteúdo</th><th>Duração</th><th></th></tr>${lessons.map(lrow).join("")}</table></div><div class="row"><button type="button" class="btn s" id="addLesson">+ Adicionar aula</button><label class="btn s p">⬆ Enviar vários arquivos<input type="file" id="multiVideo" multiple accept=".pdf,image/*,video/mp4,video/webm,video/quicktime,audio/mpeg" style="display:none"></label><span class="small muted">Selecione 1 ou vários (vídeos, PDFs, imagens): cada arquivo vira uma aula, na ordem dos nomes. Até 2 GB por arquivo; aguarde 100% antes de salvar. O sistema grava o logo Detecta em cada vídeo e página (leva alguns minutos) e o franqueado só assiste na plataforma, sem baixar. PowerPoint/Word: salve como PDF antes.</span></div><div id="multiStatus" class="small muted"></div>
     <h3 style="margin-top:6px">Prova (opcional)</h3><div id="questions" class="fg">${questions.map(qrow).join("")}</div><div><button type="button" class="btn s" id="addQ">+ Adicionar questão</button></div></div>`,
     async (o, f) => {
       const ls = [...f.querySelectorAll("#lessons tr[data-i]")].map(tr => { const g = n => tr.querySelector(`[name=${n}]`); return { id: lessons[+tr.dataset.i]?.id, title: g("title").value, kind: g("kind").value, content: g("content")?.value || "", file_id: g("file_id")?.value || null, duration_min: g("duration_min").value || null }; });

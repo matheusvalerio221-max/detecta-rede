@@ -84,17 +84,56 @@ function resizableTables(root, key) {
 const hd = (t, p, acts = "") => `<div class="hd"><div><h2>${t}</h2>${p ? `<p>${p}</p>` : ""}</div><div class="act">${acts}</div></div>`;
 
 /* ---------- Login ---------- */
+const authHead = `<div class="logo"><div class="mark">D</div><div><b>Detecta Rede</b><small>Gestão da rede de franquias</small></div></div><div class="brand" style="padding:0 0 14px"><img src="/logo-detecta.png" alt="Detecta — Manejo e Controle Integrado de Pragas Urbanas"></div>`;
 function loginView() {
-  return `<div class="login"><form class="box" id="loginForm"><div class="logo"><div class="mark">D</div><div><b>Detecta Rede</b><small>Gestão da rede de franquias</small></div></div><div class="brand" style="padding:0 0 14px"><img src="/logo-detecta.png" alt="Detecta — Manejo e Controle Integrado de Pragas Urbanas"></div>
-    <div class="fg"><div><label class="f" for="email">E-mail</label><input class="in" id="email" type="email" autocomplete="username" required></div>
+  const m = state.authMode || "login";
+  if (m === "forgot") return `<div class="login"><form class="box" id="forgotForm">${authHead}
+    <h3 style="font-size:16px;margin-bottom:6px">Esqueci minha senha</h3><p class="small muted" style="margin-bottom:12px">Informe o e-mail do seu acesso. Enviaremos um link para criar uma nova senha.</p>
+    <div class="fg"><div><label class="f" for="femail">E-mail</label><input class="in" id="femail" type="email" autocomplete="username" required value="${esc(state.lastEmail || "")}"></div>
+    <button class="btn p" style="justify-content:center">Enviar link</button></div><div id="loginErr"></div>
+    <p style="text-align:center;margin-top:14px"><button type="button" class="linkbtn" id="toLogin">← Voltar para o login</button></p></form></div>`;
+  if (m === "reset") return `<div class="login"><form class="box" id="resetForm">${authHead}
+    <h3 style="font-size:16px;margin-bottom:6px">Criar nova senha</h3><p class="small muted" style="margin-bottom:12px">Mínimo de 8 caracteres. Evite datas e o nome da empresa.</p>
+    <div class="fg"><div><label class="f" for="np1">Nova senha</label><input class="in" id="np1" type="password" autocomplete="new-password" minlength="8" required></div>
+    <div><label class="f" for="np2">Repita a nova senha</label><input class="in" id="np2" type="password" autocomplete="new-password" minlength="8" required></div>
+    <button class="btn p" style="justify-content:center">Salvar nova senha</button></div><div id="loginErr"></div>
+    <p style="text-align:center;margin-top:14px"><button type="button" class="linkbtn" id="toLogin">Cancelar</button></p></form></div>`;
+  return `<div class="login"><form class="box" id="loginForm">${authHead}
+    <div class="fg"><div><label class="f" for="email">E-mail</label><input class="in" id="email" type="email" autocomplete="username" required value="${esc(state.lastEmail || "")}"></div>
     <div><label class="f" for="password">Senha</label><input class="in" id="password" type="password" autocomplete="current-password" required></div>
-    <button class="btn p" style="justify-content:center">Entrar</button></div><div id="loginErr"></div></form></div>`;
+    <button class="btn p" style="justify-content:center">Entrar</button></div><div id="loginErr">${state.authMsg ? `<div class="okmsg">${esc(state.authMsg)}</div>` : ""}</div>
+    <p style="text-align:center;margin-top:14px"><button type="button" class="linkbtn" id="toForgot">Esqueci minha senha</button></p></form></div>`;
 }
 function bindLogin() {
-  $("#loginForm").onsubmit = async e => { e.preventDefault(); $("#loginErr").innerHTML = "";
+  const err = (m) => { $("#loginErr").innerHTML = `<div class="err">${esc(m)}</div>`; };
+  const go2 = (mode, msg) => { state.authMode = mode; state.authMsg = msg || null; render(); };
+  $("#toForgot") && ($("#toForgot").onclick = () => { state.lastEmail = $("#email").value; go2("forgot"); });
+  $("#toLogin") && ($("#toLogin").onclick = () => { if (state.authMode === "reset") history.replaceState(null, "", location.pathname); state.resetToken = null; go2("login"); });
+  const lf = $("#loginForm"); if (lf) lf.onsubmit = async e => { e.preventDefault(); $("#loginErr").innerHTML = ""; state.authMsg = null;
     try { await api("/auth/login", { method: "POST", body: { email: $("#email").value, password: $("#password").value } }); await boot(); }
-    catch (err) { $("#loginErr").innerHTML = `<div class="err">${esc(err.message)}</div>`; } };
+    catch (ex) { err(ex.message); } };
+  const ff = $("#forgotForm"); if (ff) ff.onsubmit = async e => { e.preventDefault(); const b = ff.querySelector("button.p"); b.disabled = true;
+    try { state.lastEmail = $("#femail").value; const r = await api("/auth/forgot", { method: "POST", body: { email: state.lastEmail } }); go2("login", r.message + " Verifique também a caixa de spam."); }
+    catch (ex) { err(ex.message); b.disabled = false; } };
+  const rf = $("#resetForm"); if (rf) rf.onsubmit = async e => { e.preventDefault();
+    if ($("#np1").value !== $("#np2").value) return err("As duas senhas não são iguais.");
+    try { const r = await api("/auth/reset", { method: "POST", body: { token: state.resetToken, password: $("#np1").value } });
+      history.replaceState(null, "", location.pathname); state.resetToken = null; state.lastEmail = r.email; go2("login", "Senha alterada. Entre com a nova senha."); }
+    catch (ex) { err(ex.message); } };
 }
+
+/* ---------- Olho para mostrar/ocultar senha (todos os campos de senha) ---------- */
+const EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0112 19c-7 0-11-7-11-7a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19M1 1l22 22"/><path d="M14.12 14.12a3 3 0 11-4.24-4.24"/></svg>';
+function addEyes(root = document) {
+  root.querySelectorAll("input[type=password]:not([data-eye])").forEach(inp => {
+    inp.dataset.eye = "1"; const w = document.createElement("span"); w.className = "pw"; inp.parentNode.insertBefore(w, inp); w.appendChild(inp);
+    const b = document.createElement("button"); b.type = "button"; b.className = "pw-eye"; b.tabIndex = -1; b.setAttribute("aria-label", "Mostrar senha"); b.title = "Mostrar senha"; b.innerHTML = EYE;
+    b.onclick = () => { const show = inp.type === "password"; inp.type = show ? "text" : "password"; b.innerHTML = show ? EYE_OFF : EYE; b.title = show ? "Ocultar senha" : "Mostrar senha"; b.setAttribute("aria-label", b.title); inp.focus(); };
+    w.appendChild(b);
+  });
+}
+new MutationObserver(() => addEyes()).observe(document.body, { childList: true, subtree: true });
 
 /* ---------- Modal helper ---------- */
 function modal(title, body, onSave, saveLabel = "Salvar") {
@@ -285,6 +324,8 @@ views.sec = async () => {
 
 /* ---------- Boot ---------- */
 async function boot() {
+  const m = location.hash.match(/reset=([\w-]{20,})/);
+  if (m) { state.resetToken = m[1]; state.authMode = "reset"; state.me = null; return render(); } // link do e-mail
   try { state.me = await api("/me"); } catch { state.me = null; }
   render();
 }

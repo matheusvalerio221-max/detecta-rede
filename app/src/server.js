@@ -9,6 +9,7 @@ import { loadUser } from "./auth.js";
 import { routes } from "./routes.js";
 import "./modules.js"; // Checklist, Universidade, arquivos
 import { startMailer } from "./mail.js";
+import { resumeMedia } from "./media.js";
 import { seedIfEmpty } from "./seed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -63,7 +64,7 @@ const server = http.createServer(async (req, res) => {
       const ctx = { user, body, raw, rawFile, headers: req.headers, params: found.params, query: Object.fromEntries(url.searchParams), ip: req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress, setCookie: null };
       let out; try { out = await found.r.handler(ctx); } finally { if (rawFile) fs.rm(rawFile.path, { force: true }, () => {}); }
       if (out && out.__file) { // resposta de arquivo
-        const size = fs.statSync(out.__file).size; const hdr = { "Content-Type": out.mime, "Accept-Ranges": "bytes", "Content-Disposition": `${out.inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(out.filename)}`, "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff" };
+        const size = fs.statSync(out.__file).size; const hdr = { "Content-Type": out.mime, "Accept-Ranges": "bytes", "Content-Disposition": `${out.inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(out.filename)}`, "Cache-Control": out.cache || "private, max-age=3600", "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "same-origin" };
         const rg = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
         if (rg) { const start = rg[1] ? +rg[1] : Math.max(0, size - +rg[2]); const end = rg[2] && rg[1] ? Math.min(+rg[2], size - 1) : size - 1;
           res.writeHead(206, { ...hdr, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": end - start + 1 }); return fs.createReadStream(out.__file, { start, end }).pipe(res); }
@@ -85,6 +86,7 @@ const server = http.createServer(async (req, res) => {
 migrate();
 seedIfEmpty();
 startMailer();
+resumeMedia();
 server.requestTimeout = 0; // uploads grandes (vídeos) podem levar mais de 5 min
 server.headersTimeout = 65000;
 const PORT = process.env.PORT || 3000;
